@@ -1,18 +1,35 @@
 import asyncio
-import os
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-from aiogram.filters import CommandStart
 
-API_TOKEN = os.getenv("BOT_TOKEN")
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import CommandStart
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.fsm.state import StatesGroup, State
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.memory import MemoryStorage
+
+
+# 👇 ТВОЙ ТОКЕН (вставлен)
+API_TOKEN = "8661021135:AAG4V822PQWIUSTBDp-UF7aTmSPwNvVRMro"
 ADMIN_ID = 8416383800
 
 bot = Bot(token=API_TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(storage=MemoryStorage())
 
-user_data = {}
 
-# стартовая клавиатура
+# ================= FSM =================
+
+class Form(StatesGroup):
+    name = State()
+    age = State()
+    city = State()
+    custom_city = State()
+    exp = State()
+    job = State()
+    phone = State()
+
+
+# ================= КЛАВИАТУРЫ =================
+
 start_kb = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="📩 Залишити заявку")]
@@ -20,7 +37,6 @@ start_kb = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# клавиатура городов
 city_kb = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🔥 Київ"), KeyboardButton(text="Львів")],
@@ -30,7 +46,6 @@ city_kb = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# кнопка телефона
 phone_kb = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="📱 Поділитися номером", request_contact=True)]
@@ -38,107 +53,127 @@ phone_kb = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
+
+# ================= ХЕНДЛЕРЫ =================
+
 @dp.message(CommandStart())
-async def start(message: types.Message):
+async def start(message: types.Message, state: FSMContext):
+    await state.clear()
     await message.answer(
         "Привіт! Допоможу знайти роботу 🇺🇦",
         reply_markup=start_kb
     )
 
-@dp.message()
-async def handle(message: types.Message):
-    user_id = message.from_user.id
 
-    # защита от бага (если не начал анкету)
-    if user_id not in user_data and message.text != "📩 Залишити заявку":
-        await message.answer("Натисніть кнопку нижче, щоб почати 👇", reply_markup=start_kb)
+@dp.message(lambda msg: msg.text == "📩 Залишити заявку")
+async def start_form(message: types.Message, state: FSMContext):
+    await state.set_state(Form.name)
+    await message.answer("Введіть ваше ім'я:")
+
+
+# -------- ИМЯ --------
+@dp.message(Form.name)
+async def get_name(message: types.Message, state: FSMContext):
+    await state.update_data(name=message.text)
+    await state.set_state(Form.age)
+    await message.answer("Ваш вік:")
+
+
+# -------- ВОЗРАСТ --------
+@dp.message(Form.age)
+async def get_age(message: types.Message, state: FSMContext):
+    if not message.text.isdigit():
+        await message.answer("Введіть коректний вік (число):")
         return
 
-    # старт анкеты
-    if message.text == "📩 Залишити заявку":
-        user_data[user_id] = {}
-        await message.answer("Введіть ваше ім'я:")
+    await state.update_data(age=message.text)
+    await state.set_state(Form.city)
+    await message.answer("Оберіть ваше місто:", reply_markup=city_kb)
 
-    # имя
-    elif user_id in user_data and "name" not in user_data[user_id]:
-        user_data[user_id]["name"] = message.text
-        await message.answer("Ваш вік:")
 
-    # возраст
-    elif user_id in user_data and "age" not in user_data[user_id]:
-        user_data[user_id]["age"] = message.text
-        await message.answer("Оберіть ваше місто:", reply_markup=city_kb)
+# -------- ГОРОД --------
+@dp.message(Form.city)
+async def get_city(message: types.Message, state: FSMContext):
+    if message.text == "Інше місто":
+        await state.set_state(Form.custom_city)
+        await message.answer("Введіть ваше місто:")
+        return
 
-    # выбор города
-    elif user_id in user_data and "city" not in user_data[user_id]:
-        if message.text == "Інше місто":
-            user_data[user_id]["custom_city"] = True
-            await message.answer("Введіть ваше місто:")
-            return
-        else:
-            user_data[user_id]["city"] = message.text
-            await message.answer("Досвід роботи:")
+    await state.update_data(city=message.text)
+    await state.set_state(Form.exp)
+    await message.answer("Досвід роботи:")
 
-    # ввод другого города
-    elif user_data[user_id].get("custom_city") and "city" not in user_data[user_id]:
-        user_data[user_id]["city"] = message.text
-        user_data[user_id].pop("custom_city")
-        await message.answer("Досвід роботи:")
 
-    # опыт
-    elif user_id in user_data and "exp" not in user_data[user_id]:
-        user_data[user_id]["exp"] = message.text
-        await message.answer("Яка робота вас цікавить?")
+@dp.message(Form.custom_city)
+async def get_custom_city(message: types.Message, state: FSMContext):
+    await state.update_data(city=message.text)
+    await state.set_state(Form.exp)
+    await message.answer("Досвід роботи:")
 
-    # желаемая работа
-    elif user_id in user_data and "job" not in user_data[user_id]:
-        user_data[user_id]["job"] = message.text
-        await message.answer(
-            "Натисніть кнопку нижче, щоб поділитися номером:",
-            reply_markup=phone_kb
-        )
 
-    # получение телефона
-    elif user_id in user_data and "phone" not in user_data[user_id]:
-        if message.contact:
-            user_data[user_id]["phone"] = message.contact.phone_number
-        else:
-            await message.answer(
-                "Будь ласка, натисніть кнопку для відправки номера 👇",
-                reply_markup=phone_kb
-            )
-            return
+# -------- ОПЫТ --------
+@dp.message(Form.exp)
+async def get_exp(message: types.Message, state: FSMContext):
+    await state.update_data(exp=message.text)
+    await state.set_state(Form.job)
+    await message.answer("Яка робота вас цікавить?")
 
-        city = user_data[user_id]["city"].lower()
 
-        if "київ" in city or "киев" in city or "🔥" in city:
-            prefix = "🔥 ПРІОРИТЕТ (Київ)"
-        else:
-            prefix = "🆕 Нова заявка"
+# -------- РАБОТА --------
+@dp.message(Form.job)
+async def get_job(message: types.Message, state: FSMContext):
+    await state.update_data(job=message.text)
+    await state.set_state(Form.phone)
 
-        text = f"""
+    await message.answer(
+        "Натисніть кнопку нижче, щоб поділитися номером:",
+        reply_markup=phone_kb
+    )
+
+
+# -------- ТЕЛЕФОН --------
+@dp.message(Form.phone)
+async def get_phone(message: types.Message, state: FSMContext):
+    if not message.contact:
+        await message.answer("Натисніть кнопку для відправки номера 👇", reply_markup=phone_kb)
+        return
+
+    data = await state.get_data()
+    data["phone"] = message.contact.phone_number
+
+    city = data["city"].lower()
+
+    if "київ" in city or "киев" in city or "🔥" in city:
+        prefix = "🔥 ПРІОРИТЕТ (Київ)"
+    else:
+        prefix = "🆕 Нова заявка"
+
+    text = f"""
 {prefix}
 
-👤 Ім'я: {user_data[user_id]['name']}
-🎂 Вік: {user_data[user_id]['age']}
-📍 Місто: {user_data[user_id]['city']}
-💼 Досвід: {user_data[user_id]['exp']}
-📌 Робота: {user_data[user_id]['job']}
-📱 Телефон: {user_data[user_id]['phone']}
+👤 Ім'я: {data['name']}
+🎂 Вік: {data['age']}
+📍 Місто: {data['city']}
+💼 Досвід: {data['exp']}
+📌 Робота: {data['job']}
+📱 Телефон: {data['phone']}
 """
 
-        # отправка админу
-        await bot.send_message(ADMIN_ID, text)
+    await bot.send_message(ADMIN_ID, text)
 
-        await message.answer(
-            "✅ Дякуємо! Заявку прийнято",
-            reply_markup=start_kb
-        )
+    await message.answer(
+        "✅ Дякуємо! Заявку прийнято",
+        reply_markup=start_kb
+    )
 
-        user_data.pop(user_id)
+    await state.clear()
+
+
+# ================= ЗАПУСК =================
 
 async def main():
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
